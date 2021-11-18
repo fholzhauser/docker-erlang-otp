@@ -1,14 +1,20 @@
-FROM alpine:3.13
+# syntax=docker/dockerfile:1.2
 
-ENV OTP_VERSION="24.0-rc2" \
-    REBAR3_VERSION="3.14.4"
+FROM alpine:3.14
+
+ARG OTP_VERSION
+ARG OTP_DOWNLOAD_SHA256
+ARG REBAR3_VERSION
+ARG REBAR3_DOWNLOAD_SHA256
+
+ENV OTP_VERSION=$OTP_VERSION \
+    REBAR3_VERSION=$REBAR3_VERSION
 
 LABEL org.opencontainers.image.version=$OTP_VERSION
 
+ADD ./patches /patches
 RUN set -xe \
-	&& OTP_DOWNLOAD_URL="https://github.com/erlang/otp/archive/OTP-${OTP_VERSION}.tar.gz" \
-	&& OTP_DOWNLOAD_SHA256="9eff1b61e3642e7b9f61153c0c067a2aa072e8a187b39770d8145ba11172e526" \
-	&& REBAR3_DOWNLOAD_SHA256="8d78ed53209682899d777ee9443b26b39c9bf96c8b081fe94b3dd6693077cb9a" \
+	&& OTP_DOWNLOAD_URL="https://github.com/erlang/otp/releases/download/OTP-$OTP_VERSION/otp_src_$OTP_VERSION.tar.gz" \
 	&& apk add --no-cache --virtual .fetch-deps \
 		curl \
 		ca-certificates \
@@ -16,11 +22,12 @@ RUN set -xe \
 	&& echo "$OTP_DOWNLOAD_SHA256  otp-src.tar.gz" | sha256sum -c - \
 	&& apk add --no-cache --virtual .build-deps \
 		--repository=http://dl-cdn.alpinelinux.org/alpine/v3.12/main \
+		bash \
 		dpkg-dev dpkg \
 		gcc \
 		g++ \
 		libc-dev \
-		linux-headers==5.4.5-r1 \
+		linux-headers=5.4.5-r1 \
 		make \
 		autoconf \
 		ncurses-dev \
@@ -28,17 +35,22 @@ RUN set -xe \
 		unixodbc-dev \
 		lksctp-tools-dev \
 		tar \
+	&& apk add --no-cache --virtual .edge-deps \
+		--repository=http://dl-cdn.alpinelinux.org/alpine/edge/testing \
+		quilt \
 	&& export ERL_TOP="/usr/src/otp_src_${OTP_VERSION%%@*}" \
 	&& mkdir -vp $ERL_TOP \
 	&& tar -xzf otp-src.tar.gz -C $ERL_TOP --strip-components=1 \
 	&& rm otp-src.tar.gz \
 	&& ( cd $ERL_TOP \
+	  && if [ -f /patches/$OTP_VERSION/series ]; then QUILT_PATCHES=/patches/$OTP_VERSION quilt push -a ; fi \
 	  && ./otp_build autoconf \
 	  && gnuArch="$(dpkg-architecture --query DEB_HOST_GNU_TYPE)" \
 	  && ./configure --build="$gnuArch" \
 	  && make -j$(getconf _NPROCESSORS_ONLN) \
 	  && make install ) \
 	&& rm -rf $ERL_TOP \
+	&& rm -rf /patches \
 	&& find /usr/local -regex '/usr/local/lib/erlang/\(lib/\|erts-\).*/\(man\|doc\|obj\|c_src\|emacs\|info\|examples\)' | xargs rm -rf \
 	&& find /usr/local -name src | xargs -r find | grep -v '\.hrl$' | xargs rm -v || true \
 	&& find /usr/local -name src | xargs -r find | xargs rmdir -vp || true \
@@ -64,6 +76,6 @@ RUN set -xe \
 		$runDeps \
 		lksctp-tools \
 		ca-certificates \
-	&& apk del .fetch-deps .build-deps
+	&& apk del .fetch-deps .build-deps .edge-deps
 
 CMD ["erl"]
